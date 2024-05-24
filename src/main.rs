@@ -10,11 +10,15 @@ use std::thread;
 use std::time;
 use std::usize;
 
+use threadpool;
+
 use log::info;
 use log::warn;
 
 fn main() -> std::io::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+
+    let pool = threadpool::ThreadPool::new(5);
 
     let target_proxy_host = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(93, 184, 215, 14)), 80);
 
@@ -27,22 +31,25 @@ fn main() -> std::io::Result<()> {
         info!("received request");
         match stream {
             Ok(stream) => {
-                let target =
-                    TcpStream::connect_timeout(&target_proxy_host, time::Duration::from_secs(5))?;
-                let src = stream.try_clone()?;
-                let dst = target.try_clone()?;
+                let target_proxy_host = target_proxy_host.clone();
+                pool.execute(move || {
+                    let target = TcpStream::connect_timeout(
+                        &target_proxy_host,
+                        time::Duration::from_secs(5),
+                    )
+                    .unwrap();
+                    
+                    let src = stream.try_clone().unwrap();
+                    let dst = target.try_clone().unwrap();
+                    let h1 = thread::spawn(move || pipe(src, dst));
 
-                let h1 = thread::spawn(move || {
-                    pipe(src, dst);
-                });
-
-                let src = stream.try_clone()?;
-                let dst = target.try_clone()?;
-                let h2 = thread::spawn(move || {
-                    pipe(dst, src);
-                });
-                h1.join().unwrap();
-                h2.join().unwrap();
+                    let src = stream.try_clone().unwrap();
+                    let dst = target.try_clone().unwrap();
+                    let h2 = thread::spawn(move || pipe(dst, src));
+                    
+                    h1.join().unwrap();
+                    h2.join().unwrap();
+                })
             }
             Err(_) => todo!(),
         }
