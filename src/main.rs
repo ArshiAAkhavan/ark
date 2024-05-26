@@ -1,84 +1,49 @@
-use std::io::Read;
-use std::io::Write;
-use std::net;
-use std::net::IpAddr;
-use std::net::Ipv4Addr;
-use std::net::SocketAddr;
-use std::net::TcpListener;
-use std::net::TcpStream;
-use std::thread;
-use std::time;
-use std::usize;
-
-use threadpool;
-
-use log::info;
-use log::warn;
+use etherparse::IpNumber;
+use log::{info, warn};
 
 fn main() -> std::io::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    let pool = threadpool::ThreadPool::new(5);
+    let iface = tun_tap::Iface::new("ark", tun_tap::Mode::Tun)?;
 
-    let target_proxy_host = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(93, 184, 215, 14)), 80);
+    let mut buff = [0u8; 1504]; // MTU + 4 byte for header
+    while let Ok(nbytes) = iface.recv(&mut buff) {
+        let eth_proto = u16::from_be_bytes([buff[2], buff[3]]);
 
-    let bind_address = "127.0.0.1:8080";
-    let listener = TcpListener::bind(bind_address)?;
-    info!("listening on {bind_address}");
-    info!("proxying to {target_proxy_host}");
-
-    for stream in listener.incoming() {
-        info!("received request");
-        match stream {
-            Ok(stream) => {
-                let target_proxy_host = target_proxy_host.clone();
-                pool.execute(move || {
-                    let target = TcpStream::connect_timeout(
-                        &target_proxy_host,
-                        time::Duration::from_secs(5),
-                    )
-                    .unwrap();
-                    
-                    let src = stream.try_clone().unwrap();
-                    let dst = target.try_clone().unwrap();
-                    let h1 = thread::spawn(move || pipe(src, dst));
-
-                    let src = stream.try_clone().unwrap();
-                    let dst = target.try_clone().unwrap();
-                    let h2 = thread::spawn(move || pipe(dst, src));
-                    
-                    h1.join().unwrap();
-                    h2.join().unwrap();
-                })
+        match eth_proto {
+            // Ipv4
+            0x800 => match etherparse::Ipv4HeaderSlice::from_slice(&buff[4..nbytes]) {
+                Ok(p) => {
+                    let ip_proto = p.protocol();
+                    let src_ip = p.source_addr();
+                    let dst_ip = p.destination_addr();
+                    let ip_payload_len = p.payload_len().unwrap_or(0);
+                    match ip_proto {
+                        IpNumber::TCP => {
+                            match etherparse::TcpHeaderSlice::from_slice(
+                                &buff[4 + p.slice().len()..nbytes],
+                            ) {
+                                Ok(p) => {
+                                    let src_port = p.source_port();
+                                    let dst_port = p.destination_port();
+                                    let tcp_payload_len = ip_payload_len - p.slice().len() as u16;
+                                    info!(
+                                        "{src_ip}:{src_port} -> {dst_ip}:{dst_port}: len = {tcp_payload_len:?}"
+                                    );
+                                }
+                                Err(_) => warn!("sick tcp packet"),
+                            }
+                        }
+                        IpNumber::UDP => {}
+                        _ => info!("sick layer4 protocol"),
+                    }
+                }
+                Err(_) => info!("ignoring malformed ipv4 packet"),
+            },
+            _ => {
+                info!("ignoring other ip layer protocols")
             }
-            Err(_) => todo!(),
         }
     }
     Ok(())
-}
-
-fn pipe(mut src: TcpStream, mut dst: TcpStream) {
-    const BUFF_LEN: usize = 1 << 16;
-    let mut buf = [0; BUFF_LEN];
-
-    info!("handling connection on {:?}", src.local_addr());
-    loop {
-        match src.read(&mut buf) {
-            Ok(nbytes @ 1..) => {
-                info!("received {nbytes} on {:?}", src.peer_addr());
-                let _ = dst.write_all(&buf[0..nbytes]).unwrap();
-            }
-            Ok(0) => {
-                // 0 means that the Read channel of src is closed
-                let _ = dst.shutdown(net::Shutdown::Write).unwrap();
-                return;
-            }
-            Err(e) => {
-                warn!("error occurred! {e}");
-                let _ = src.shutdown(net::Shutdown::Read).unwrap();
-                let _ = dst.shutdown(net::Shutdown::Write).unwrap();
-                return;
-            }
-        }
-    }
 }
