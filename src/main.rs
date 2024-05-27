@@ -18,10 +18,11 @@ fn main() -> std::io::Result<()> {
                     let src_ip = p.source_addr();
                     let dst_ip = p.destination_addr();
                     let ip_payload_len = p.payload_len().unwrap_or(0);
+                    let ip_header_end_index = 4 + p.slice().len();
                     match ip_proto {
                         IpNumber::TCP => {
                             match etherparse::TcpHeaderSlice::from_slice(
-                                &buff[4 + p.slice().len()..nbytes],
+                                &buff[ip_header_end_index..nbytes],
                             ) {
                                 Ok(p) => {
                                     let src_port = p.source_port();
@@ -30,6 +31,11 @@ fn main() -> std::io::Result<()> {
                                     info!(
                                         "{src_ip}:{src_port} -> {dst_ip}:{dst_port}: len = {tcp_payload_len:?}"
                                     );
+                                    // udp_wrap_and_send(
+                                    //     src_ip,
+                                    //     dst_ip,
+                                    //     &buff[ip_header_end_index..nbytes],
+                                    // );
                                 }
                                 Err(_) => warn!("sick tcp packet"),
                             }
@@ -47,3 +53,7 @@ fn main() -> std::io::Result<()> {
     }
     Ok(())
 }
+
+// fn udp_wrap_and_send(src_ip: std::net::Ipv4Addr, dst_ip: std::net::Ipv4Addr, nbytes: &[u8]) -> _ {
+//     todo!()
+// }
