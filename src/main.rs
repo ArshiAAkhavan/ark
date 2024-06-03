@@ -1,59 +1,51 @@
+use std::thread;
+
+use ark::{ProxyMode, ProxyRelay, TcpPacketSlice};
 use etherparse::IpNumber;
-use log::{info, warn};
+use log::{debug, info, warn};
 
 fn main() -> std::io::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    let iface = tun_tap::Iface::new("ark", tun_tap::Mode::Tun)?;
+    let iface = tun_tap::Iface::without_packet_info("ark", tun_tap::Mode::Tun)?;
 
-    let mut buff = [0u8; 1504]; // MTU + 4 byte for header
-    while let Ok(nbytes) = iface.recv(&mut buff) {
-        let eth_proto = u16::from_be_bytes([buff[2], buff[3]]);
+    let proxy = ProxyRelay::new("127.0.0.1:7070", ProxyMode::Client);
 
-        match eth_proto {
-            // Ipv4
-            0x800 => match etherparse::Ipv4HeaderSlice::from_slice(&buff[4..nbytes]) {
-                Ok(p) => {
-                    let ip_proto = p.protocol();
-                    let src_ip = p.source_addr();
-                    let dst_ip = p.destination_addr();
-                    let ip_payload_len = p.payload_len().unwrap_or(0);
-                    let ip_header_end_index = 4 + p.slice().len();
-                    match ip_proto {
-                        IpNumber::TCP => {
-                            match etherparse::TcpHeaderSlice::from_slice(
-                                &buff[ip_header_end_index..nbytes],
-                            ) {
-                                Ok(p) => {
-                                    let src_port = p.source_port();
-                                    let dst_port = p.destination_port();
-                                    let tcp_payload_len = ip_payload_len - p.slice().len() as u16;
-                                    info!(
-                                        "{src_ip}:{src_port} -> {dst_ip}:{dst_port}: len = {tcp_payload_len:?}"
-                                    );
-                                    // udp_wrap_and_send(
-                                    //     src_ip,
-                                    //     dst_ip,
-                                    //     &buff[ip_header_end_index..nbytes],
-                                    // );
-                                }
-                                Err(_) => warn!("sick tcp packet"),
-                            }
-                        }
-                        IpNumber::UDP => {}
-                        _ => info!("sick layer4 protocol"),
-                    }
-                }
-                Err(_) => info!("ignoring malformed ipv4 packet"),
-            },
-            _ => {
-                info!("ignoring other ip layer protocols")
-            }
-        }
-    }
+    thread::scope(|s| {
+        s.spawn(|| proxy.start_upd_pipe());
+        s.spawn(|| proxy.run());
+        s.spawn(|| read_from_nic(iface, &proxy));
+    });
+
     Ok(())
 }
 
-// fn udp_wrap_and_send(src_ip: std::net::Ipv4Addr, dst_ip: std::net::Ipv4Addr, nbytes: &[u8]) -> _ {
-//     todo!()
-// }
+fn read_from_nic(iface: tun_tap::Iface, proxy: &ProxyRelay) {
+    let mut buff = [0u8; 1500];
+    while let Ok(nbytes) = iface.recv(&mut buff) {
+        if let Ok(iph) = etherparse::Ipv4HeaderSlice::from_slice(&buff[..nbytes]) {
+            let ip_proto = iph.protocol();
+            let src_ip = iph.source_addr();
+            let dst_ip = iph.destination_addr();
+            let ip_header_end_index = iph.slice().len();
+            match ip_proto {
+                IpNumber::TCP => {
+                    match etherparse::TcpHeaderSlice::from_slice(&buff[ip_header_end_index..nbytes])
+                    {
+                        Ok(_tcph) => {
+                            let packet = TcpPacketSlice::new(
+                                src_ip,
+                                dst_ip,
+                                &buff[ip_header_end_index..nbytes],
+                            );
+                            info!("iface: {packet:?}");
+                            proxy.write(packet).unwrap();
+                        }
+                        Err(_) => warn!("sick tcp packet"),
+                    }
+                }
+                _ => debug!("sick layer4 protocol {ip_proto:?}"),
+            }
+        }
+    }
+}
