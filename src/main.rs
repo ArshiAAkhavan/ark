@@ -88,7 +88,7 @@ fn read_from_nic(iface: &tun_tap::Iface, proxy: &ProxyRelay) {
         if let Ok(iph) = etherparse::Ipv4HeaderSlice::from_slice(&buff[..nbytes]) {
             let ip_proto = iph.protocol();
             let src_ip = iph.source_addr();
-            let mut dst_ip = iph.destination_addr();
+            let dst_ip = iph.destination_addr();
             // if dst_ip == "172.30.0.14".parse::<Ipv4Addr>().unwrap() {
             // let dst_ip = "34.223.124.45".parse().unwrap();
             // }
