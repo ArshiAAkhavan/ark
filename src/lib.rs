@@ -31,7 +31,7 @@ impl TcpPacketSlice {
     pub fn destination_ip(&self) -> Ipv4Addr {
         Ipv4Addr::new(self.0[4], self.0[5], self.0[6], self.0[7])
     }
-    pub fn payload_len(&self) -> u16 {
+    pub fn packet_len(&self) -> u16 {
         u16::from_be_bytes([self.0[8], self.0[9]])
     }
     pub fn source_port(&self) -> u16 {
@@ -40,10 +40,14 @@ impl TcpPacketSlice {
     pub fn destination_port(&self) -> u16 {
         u16::from_be_bytes([self.0[12], self.0[13]])
     }
+    pub fn raw(&self) -> &[u8] {
+        &self.0[10..self.packet_len() as usize + 10]
+    }
 }
 
 impl Debug for TcpPacketSlice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let x = etherparse::TcpHeaderSlice::from_slice(&self.0[10..]).unwrap();
         write!(
             f,
             "{}:{} -> {}:{}: len = {}",
@@ -51,7 +55,7 @@ impl Debug for TcpPacketSlice {
             self.source_port(),
             self.destination_ip(),
             self.destination_port(),
-            self.payload_len()
+            self.packet_len() - x.slice().len() as u16
         )
     }
 }

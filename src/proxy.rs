@@ -9,6 +9,7 @@ use log::info;
 
 use crate::TcpPacketSlice;
 
+#[derive(Clone)]
 pub enum Mode {
     Client,
     Server,
@@ -50,7 +51,7 @@ impl Relay {
     pub fn new<A: ToSocketAddrs>(server_domain: A, mode: Mode) -> Self {
         let proxy_conn = match mode {
             Mode::Client => {
-                let proxy_conn = UdpSocket::bind("0.0.0.0:9090").unwrap();
+                let proxy_conn = UdpSocket::bind("0.0.0.0:7070").unwrap();
                 info!("started udp client socket");
                 UdpSocket::connect(&proxy_conn, server_domain).unwrap();
                 info!("connected to proxy server");
@@ -86,11 +87,9 @@ impl Relay {
         while let Ok(nbytes) = self.proxy_conn.recv(&mut buf) {
             let mut packet = [0; 1500];
             (&mut packet[0..nbytes]).copy_from_slice(&buf[0..nbytes]);
+            let packet = TcpPacketSlice(packet);
             info!("received packet: {packet:?}");
-            self.tcp_output_pipe
-                .tx
-                .send(TcpPacketSlice(packet))
-                .unwrap();
+            self.udp_pipe.tx.send(packet).unwrap();
         }
     }
 
@@ -103,6 +102,7 @@ impl Relay {
                 },
                 recv(self.udp_pipe.rx) -> packet => {
                     let packet = packet.unwrap();
+                    info!("upd pipe received packet: {packet:?}");
                     self.tcp_output_pipe.tx.send(packet).unwrap();
                 }
             }
