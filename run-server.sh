@@ -11,7 +11,7 @@ trap "kill $pid" INT TERM
 
 sleep 5
 iptables -t nat -A POSTROUTING -s 172.16.0.0/24 ! -d 172.16.0.0/24 -j MASQUERADE
-echo "route neverssl.com"
+echo "nat is done"
 
 wait $pid
 

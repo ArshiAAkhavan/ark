@@ -58,12 +58,12 @@ fn main() -> std::io::Result<()> {
         opts.mode.into(),
     )?;
 
-    // thread::scope(|s| {
-    //     s.spawn(|| proxy.start_upd_pipe());
-    //     s.spawn(|| proxy.run());
-    //     s.spawn(|| read_from_nic(&iface, &proxy));
-    //     s.spawn(|| write_to_nic(&iface, &proxy));
-    // });
+    thread::scope(|s| {
+        s.spawn(|| proxy.start_upd_pipe());
+        s.spawn(|| proxy.run());
+        s.spawn(|| read_from_nic(&iface, &proxy));
+        s.spawn(|| write_to_nic(&iface, &proxy));
+    });
 
     Ok(())
 }

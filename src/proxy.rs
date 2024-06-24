@@ -57,16 +57,11 @@ impl Relay {
             Mode::Client => {
                 let proxy_conn = UdpSocket::bind(local)?;
                 info!("started udp client socket");
-                dbg!(remote.to_socket_addrs().unwrap().next().unwrap());
-                proxy_conn.connect("87.247.189.1:9090").unwrap();
-                // UdpSocket::connect(&proxy_conn, remote.to_socket_addrs().unwrap().next().unwrap()).unwrap();
-                info!("1");
+                UdpSocket::connect(&proxy_conn, &remote)?;
                 proxy_conn.send("client hello".as_bytes())?;
-                info!("2");
 
                 let mut buf = [0u8; 1500];
                 let nbytes = proxy_conn.recv(&mut buf)?;
-                info!("3");
                 if &buf[..nbytes] != "server accept".as_bytes() {
                     return Err(Error::UdpSocketError(io::Error::new(
                         io::ErrorKind::ConnectionAborted,
@@ -91,10 +86,12 @@ impl Relay {
                 let mut buf = [0u8; 1500];
                 let peer_addr = loop {
                     let (nbytes, addr) = proxy_conn.recv_from(&mut buf)?;
-                    if &buf[..nbytes] != "client hello".as_bytes() {
+                    if &buf[..nbytes] == "client hello".as_bytes() {
+                        proxy_conn.send_to("server accept".as_bytes(), addr)?;
                         break addr;
                     }
                 };
+                info!("connected to proxy client");
                 (proxy_conn, peer_addr)
             }
         };
