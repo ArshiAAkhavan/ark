@@ -1,4 +1,7 @@
-use std::net::{ToSocketAddrs, UdpSocket};
+use std::{
+    io,
+    net::{SocketAddr, ToSocketAddrs, UdpSocket},
+};
 
 use crossbeam::{
     channel::{self, Receiver, Sender},
@@ -36,39 +39,72 @@ impl Default for TcpPipe {
 #[derive(Debug)]
 pub enum Error {
     PipeError,
-    UdpSocketError,
+    UdpSocketError(io::Error),
 }
 
 unsafe impl Sync for Relay {}
 pub struct Relay {
     proxy_conn: UdpSocket,
+    peer_addr: SocketAddr,
     tcp_input_pipe: TcpPipe,
     tcp_output_pipe: TcpPipe,
     udp_pipe: TcpPipe,
 }
 
 impl Relay {
-    pub fn new<A: ToSocketAddrs>(server_domain: A, mode: Mode) -> Self {
-        let proxy_conn = match mode {
+    pub fn new<A: ToSocketAddrs>(local: A, remote: A, mode: Mode) -> Result<Self, Error> {
+        let (proxy_conn, peer_addr) = match mode {
             Mode::Client => {
-                let proxy_conn = UdpSocket::bind("0.0.0.0:7070").unwrap();
+                let proxy_conn = UdpSocket::bind(local)?;
                 info!("started udp client socket");
-                UdpSocket::connect(&proxy_conn, server_domain).unwrap();
+                dbg!(remote.to_socket_addrs().unwrap().next().unwrap());
+                proxy_conn.connect("87.247.189.1:9090").unwrap();
+                // UdpSocket::connect(&proxy_conn, remote.to_socket_addrs().unwrap().next().unwrap()).unwrap();
+                info!("1");
+                proxy_conn.send("client hello".as_bytes())?;
+                info!("2");
+
+                let mut buf = [0u8; 1500];
+                let nbytes = proxy_conn.recv(&mut buf)?;
+                info!("3");
+                if &buf[..nbytes] != "server accept".as_bytes() {
+                    return Err(Error::UdpSocketError(io::Error::new(
+                        io::ErrorKind::ConnectionAborted,
+                        "failed to handshake with server",
+                    )));
+                }
                 info!("connected to proxy server");
-                proxy_conn
+                (
+                    proxy_conn,
+                    remote
+                        .to_socket_addrs()?
+                        .next()
+                        .ok_or(Error::UdpSocketError(io::Error::new(
+                            io::ErrorKind::ConnectionAborted,
+                            "failed to handshake with server",
+                        )))?,
+                )
             }
             Mode::Server => {
-                let proxy_conn = UdpSocket::bind(server_domain).unwrap();
+                let proxy_conn = UdpSocket::bind(local).unwrap();
                 info!("started udp server socket");
-                proxy_conn
+                let mut buf = [0u8; 1500];
+                let peer_addr = loop {
+                    let (nbytes, addr) = proxy_conn.recv_from(&mut buf)?;
+                    if &buf[..nbytes] != "client hello".as_bytes() {
+                        break addr;
+                    }
+                };
+                (proxy_conn, peer_addr)
             }
         };
-        Self {
+        Ok(Self {
             proxy_conn,
+            peer_addr,
             tcp_input_pipe: Default::default(),
             tcp_output_pipe: Default::default(),
             udp_pipe: Default::default(),
-        }
+        })
     }
 
     pub fn write(&self, packet: TcpPacketSlice) -> Result<(), Error> {
@@ -98,7 +134,7 @@ impl Relay {
             select! {
                 recv(self.tcp_input_pipe.rx) -> packet => {
                     let packet = packet.unwrap();
-                    self.proxy_conn.send(&(packet.0)).unwrap();
+                    self.proxy_conn.send_to(&(packet.0), self.peer_addr).unwrap();
                 },
                 recv(self.udp_pipe.rx) -> packet => {
                     let packet = packet.unwrap();
@@ -106,6 +142,21 @@ impl Relay {
                     self.tcp_output_pipe.tx.send(packet).unwrap();
                 }
             }
+        }
+    }
+}
+
+impl From<io::Error> for Error {
+    fn from(value: io::Error) -> Self {
+        Self::UdpSocketError(value)
+    }
+}
+
+impl From<Error> for io::Error {
+    fn from(value: Error) -> Self {
+        match value {
+            Error::PipeError => io::Error::new(io::ErrorKind::BrokenPipe, "pipe error"),
+            Error::UdpSocketError(e) => e,
         }
     }
 }

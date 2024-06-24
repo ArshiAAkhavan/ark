@@ -6,7 +6,7 @@ use log::{debug, info, warn};
 
 use clap::{Parser, ValueEnum};
 
-#[derive(Clone, ValueEnum, Default)]
+#[derive(Clone, ValueEnum, Default,PartialEq)]
 pub enum Mode {
     #[default]
     Client,
@@ -27,9 +27,13 @@ impl From<Mode> for ProxyMode {
 #[command(propagate_version = true)]
 #[clap(rename_all = "kebab_case")]
 struct Opts {
-    /// Address of the proxy server
+    /// Address of the remote server
     #[arg(short, long)]
-    proxy_server: String,
+    remote: Option<String>,
+
+    /// Address to bind locally
+    #[arg(short, long)]
+    local: String,
 
     /// weather to run in client mode or server mode
     #[arg(short, long)]
@@ -42,17 +46,24 @@ struct Opts {
 
 fn main() -> std::io::Result<()> {
     let opts = Opts::parse();
+    if opts.mode == Mode::Client && opts.remote.is_none() {
+        panic!("provide remote when running in client mode");
+    }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let iface = setup_iface(&opts.subnet)?;
-    let proxy = ProxyRelay::new(opts.proxy_server, opts.mode.into());
+    let proxy = ProxyRelay::new(
+        opts.local,
+        opts.remote.unwrap_or_default(),
+        opts.mode.into(),
+    )?;
 
-    thread::scope(|s| {
-        s.spawn(|| proxy.start_upd_pipe());
-        s.spawn(|| proxy.run());
-        s.spawn(|| read_from_nic(&iface, &proxy));
-        s.spawn(|| write_to_nic(&iface, &proxy));
-    });
+    // thread::scope(|s| {
+    //     s.spawn(|| proxy.start_upd_pipe());
+    //     s.spawn(|| proxy.run());
+    //     s.spawn(|| read_from_nic(&iface, &proxy));
+    //     s.spawn(|| write_to_nic(&iface, &proxy));
+    // });
 
     Ok(())
 }
