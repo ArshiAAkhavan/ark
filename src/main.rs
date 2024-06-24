@@ -86,7 +86,6 @@ fn write_to_nic(iface: &tun_tap::Iface, proxy: &ProxyRelay) {
         ptr.copy_from_slice(packet.raw());
 
         let buf = &buf[..iph.header_len() + packet.packet_len() as usize];
-        info!("{buf:?}");
         iface.send(buf).unwrap();
     }
 }
