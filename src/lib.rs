@@ -1,3 +1,4 @@
+mod edns;
 mod proxy;
 
 use std::{fmt::Debug, net::Ipv4Addr};
@@ -40,8 +41,11 @@ impl TcpPacketSlice {
     pub fn destination_port(&self) -> u16 {
         u16::from_be_bytes([self.0[12], self.0[13]])
     }
-    pub fn raw(&self) -> &[u8] {
+    pub fn tcp_raw(&self) -> &[u8] {
         &self.0[10..self.packet_len() as usize + 10]
+    }
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0[0..self.packet_len() as usize + 10]
     }
 }
 

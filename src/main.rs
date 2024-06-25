@@ -1,12 +1,12 @@
 use std::{process::Command, thread};
 
 use ark::{ProxyMode, ProxyRelay, TcpPacketSlice};
-use etherparse::IpNumber;
+use etherparse::{IpNumber, TcpOptionElement};
 use log::{debug, info, warn};
 
 use clap::{Parser, ValueEnum};
 
-#[derive(Clone, ValueEnum, Default,PartialEq)]
+#[derive(Clone, ValueEnum, Default, PartialEq)]
 pub enum Mode {
     #[default]
     Client,
@@ -83,7 +83,7 @@ fn write_to_nic(iface: &tun_tap::Iface, proxy: &ProxyRelay) {
         let mut ptr = &mut buf[..];
         iph.write(&mut ptr).unwrap();
         let ptr = &mut ptr[..packet.packet_len() as usize];
-        ptr.copy_from_slice(packet.raw());
+        ptr.copy_from_slice(packet.tcp_raw());
 
         let buf = &buf[..iph.header_len() + packet.packet_len() as usize];
         iface.send(buf).unwrap();

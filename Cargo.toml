@@ -11,6 +11,7 @@ clap = { version = "4.5.4", features = ["derive", "cargo"] }
 crossbeam = "0.8.4"
 env_logger = "0.11.3"
 etherparse = "0.14.3"
+hickory-proto = "0.24.1"
 log = "0.4.21"
 pnet = "0.35.0"
 threadpool = "1.8.1"

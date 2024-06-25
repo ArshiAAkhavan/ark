@@ -10,7 +10,7 @@ use crossbeam::{
 
 use log::info;
 
-use crate::TcpPacketSlice;
+use crate::{edns, TcpPacketSlice};
 
 #[derive(Clone)]
 pub enum Mode {
@@ -118,8 +118,10 @@ impl Relay {
     pub fn start_upd_pipe(&self) {
         let mut buf = [0; 1500];
         while let Ok(nbytes) = self.proxy_conn.recv(&mut buf) {
+            // let buf = edns::from_edns_packet(&buf[..nbytes]).unwrap();
             let mut packet = [0; 1500];
             (&mut packet[0..nbytes]).copy_from_slice(&buf[0..nbytes]);
+            // (&mut packet[..buf.len()]).copy_from_slice(&buf);
             let packet = TcpPacketSlice(packet);
             info!("received packet: {packet:?}");
             self.udp_pipe.tx.send(packet).unwrap();

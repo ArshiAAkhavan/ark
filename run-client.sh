@@ -9,7 +9,7 @@ pid=$!
 
 trap "kill $pid" INT TERM
 
-sleep 5
+sleep 1
 sudo ip route add 34.223.124.45 dev ark-0
 echo "route neverssl.com"
 
