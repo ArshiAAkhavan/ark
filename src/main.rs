@@ -100,13 +100,23 @@ fn read_from_nic(iface: &tun_tap::Iface, proxy: &ProxyRelay) {
             let ip_header_end_index = iph.slice().len();
             match ip_proto {
                 IpNumber::TCP => {
-                    match etherparse::TcpHeaderSlice::from_slice(&buff[ip_header_end_index..nbytes])
-                    {
-                        Ok(_tcph) => {
+                    match etherparse::TcpHeader::from_slice(&buff[ip_header_end_index..nbytes]) {
+                        Ok((mut tcph, _)) => {
+                            let tcp_packet_size = nbytes - ip_header_end_index;
+                            let mut tcp_buff = [0u8; 1500];
+                            let _ = &tcp_buff[..tcp_packet_size]
+                                .copy_from_slice(&buff[ip_header_end_index..nbytes]);
+                            set_mss_if_any(&mut tcph);
+                            let x = tcph.calc_checksum_ipv4_raw(src_ip.octets(), dst_ip.octets(), &tcp_buff[tcph.header_len()..tcp_packet_size]).unwrap();
+                            tcph.checksum = x;
+                            // assert_eq!(prev, tcph.header_len());
+                            let mut buf = &mut tcp_buff[..];
+                            tcph.write(&mut buf).unwrap();
                             let packet = TcpPacketSlice::new(
                                 src_ip,
                                 dst_ip,
-                                &buff[ip_header_end_index..nbytes],
+                                &tcp_buff[..tcp_packet_size],
+                                // &buff[ip_header_end_index..nbytes],
                             );
                             info!("iface: {packet:?}");
                             proxy.write(packet).unwrap();
@@ -118,6 +128,44 @@ fn read_from_nic(iface: &tun_tap::Iface, proxy: &ProxyRelay) {
             }
         }
     }
+}
+
+fn set_mss_if_any(tcph: &mut etherparse::TcpHeader) {
+    let mss = tcph.options_iterator().find_map(|opt| match opt.ok()? {
+        TcpOptionElement::MaximumSegmentSize(mss) => Some(mss),
+        _ => None,
+    });
+    if mss.is_none() {
+        return;
+    }
+    let mut new_options = Vec::new();
+
+    for option in tcph.options_iterator() {
+        let option = option.unwrap();
+        match option {
+            TcpOptionElement::MaximumSegmentSize(mss) => {
+                info!("old mss: {mss}");
+                let new_mss = std::cmp::min(mss, 1300);
+                new_options.push(TcpOptionElement::MaximumSegmentSize(new_mss));
+            }
+            _ => new_options.push(option),
+        }
+    }
+
+    tcph.set_options(&new_options)
+        .map_err(|_| "Failed to set options")
+        .unwrap();
+
+    for option in tcph.options_iterator() {
+        let option = option.unwrap();
+        match option {
+            TcpOptionElement::MaximumSegmentSize(mss) => {
+                info!("new mss: {mss}");
+            }
+            _ => {}
+        }
+    }
+    info!("set MSS")
 }
 
 fn setup_iface(subnet: &str) -> std::io::Result<tun_tap::Iface> {
