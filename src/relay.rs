@@ -8,7 +8,7 @@ use crossbeam::{
     select,
 };
 
-use log::{info, warn};
+use log::{debug, info, warn};
 
 use crate::{edns, TcpPacketSlice};
 
@@ -120,8 +120,9 @@ impl Relay {
         while let Ok(nbytes) = self.tunnel_conn.recv(&mut buf) {
             let buf = match edns::from_edns_packet(&buf[..nbytes]) {
                 Ok(buf) => buf,
-                Err(_) => {
+                Err(e) => {
                     warn!("malformed packet received via tunnel. ignoring..");
+                    debug!("malformed packet received via tunnel: {e}");
                     continue;
                 }
             };
@@ -144,8 +145,9 @@ impl Relay {
 
                     let buf = match edns::to_edns_packet(packet.as_bytes()){
                         Ok(buf) => buf,
-                        Err(_) => {
+                        Err(e) => {
                             warn!("malformed packet received via tunnel. ignoring..");
+                            debug!("malformed packet received via tunnel: {e}");
                             continue;
                         }
                     };
