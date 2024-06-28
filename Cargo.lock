@@ -87,6 +87,7 @@ dependencies = [
  "hickory-proto",
  "log",
  "pnet",
+ "thiserror",
  "threadpool",
  "tun-tap",
 ]

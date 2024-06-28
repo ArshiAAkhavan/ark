@@ -1,6 +1,6 @@
 use std::{process::Command, thread};
 
-use ark::{ProxyMode, ProxyRelay, TcpPacketSlice};
+use ark::{Relay, RelayMode, TcpPacketSlice};
 use etherparse::{IpNumber, TcpOptionElement};
 use log::{debug, info, warn};
 
@@ -13,11 +13,11 @@ pub enum Mode {
     Server,
 }
 
-impl From<Mode> for ProxyMode {
+impl From<Mode> for RelayMode {
     fn from(value: Mode) -> Self {
         match value {
-            Mode::Client => ProxyMode::Client,
-            Mode::Server => ProxyMode::Server,
+            Mode::Client => RelayMode::Client,
+            Mode::Server => RelayMode::Server,
         }
     }
 }
@@ -44,7 +44,7 @@ struct Opts {
     subnet: String,
 }
 
-fn main() -> std::io::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let opts = Opts::parse();
     if opts.mode == Mode::Client && opts.remote.is_none() {
         panic!("provide remote when running in client mode");
@@ -52,7 +52,7 @@ fn main() -> std::io::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let iface = setup_iface(&opts.subnet)?;
-    let proxy = ProxyRelay::new(
+    let proxy = Relay::new(
         opts.local,
         opts.remote.unwrap_or_default(),
         opts.mode.into(),
@@ -68,7 +68,7 @@ fn main() -> std::io::Result<()> {
     Ok(())
 }
 
-fn write_to_nic(iface: &tun_tap::Iface, proxy: &ProxyRelay) {
+fn write_to_nic(iface: &tun_tap::Iface, proxy: &Relay) {
     while let Ok(packet) = proxy.read() {
         info!("writing to nic: {packet:?}");
         let iph = etherparse::Ipv4Header::new(
@@ -90,7 +90,7 @@ fn write_to_nic(iface: &tun_tap::Iface, proxy: &ProxyRelay) {
     }
 }
 
-fn read_from_nic(iface: &tun_tap::Iface, proxy: &ProxyRelay) {
+fn read_from_nic(iface: &tun_tap::Iface, proxy: &Relay) {
     let mut buff = [0u8; 1500];
     while let Ok(nbytes) = iface.recv(&mut buff) {
         if let Ok(iph) = etherparse::Ipv4HeaderSlice::from_slice(&buff[..nbytes]) {
@@ -107,7 +107,13 @@ fn read_from_nic(iface: &tun_tap::Iface, proxy: &ProxyRelay) {
                             let _ = &tcp_buff[..tcp_packet_size]
                                 .copy_from_slice(&buff[ip_header_end_index..nbytes]);
                             set_mss_if_any(&mut tcph);
-                            let x = tcph.calc_checksum_ipv4_raw(src_ip.octets(), dst_ip.octets(), &tcp_buff[tcph.header_len()..tcp_packet_size]).unwrap();
+                            let x = tcph
+                                .calc_checksum_ipv4_raw(
+                                    src_ip.octets(),
+                                    dst_ip.octets(),
+                                    &tcp_buff[tcph.header_len()..tcp_packet_size],
+                                )
+                                .unwrap();
                             tcph.checksum = x;
                             // assert_eq!(prev, tcph.header_len());
                             let mut buf = &mut tcp_buff[..];

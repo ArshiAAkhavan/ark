@@ -1,9 +1,9 @@
 mod edns;
-mod proxy;
+mod relay;
 
 use std::{fmt::Debug, net::Ipv4Addr};
 
-pub use proxy::{Error as ProxyError, Mode as ProxyMode, Relay as ProxyRelay};
+pub use relay::{RelayError, Mode as RelayMode, Relay as Relay};
 
 pub struct TcpPacketSlice([u8; 1500]);
 
