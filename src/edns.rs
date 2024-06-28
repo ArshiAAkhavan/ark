@@ -9,18 +9,15 @@ use hickory_proto as dns;
 
 const ARK_EDNS_OPCODE: u16 = 65001;
 
-#[derive(Debug)]
+#[derive(Debug,thiserror::Error)]
 pub enum EdnsError {
-    InvalidName,
-    OPTRecordNotFound,
+    #[error("failed to create DNS packet")]
+    DnsPacketError(#[from] ProtoError),
+    
+    #[error("failed to extract raw data from EDNS field")]
+    EdnsDataNotFound,
 }
 type EdnsResult<T> = Result<T, EdnsError>;
-
-impl From<ProtoError> for EdnsError {
-    fn from(_value: ProtoError) -> Self {
-        Self::InvalidName
-    }
-}
 
 pub fn to_edns_packet(data: &[u8]) -> EdnsResult<Vec<u8>> {
     let mut msg = Message::new();
@@ -56,15 +53,15 @@ pub fn from_edns_packet(buf: &[u8]) -> EdnsResult<Vec<u8>> {
     let edns = deserialized_msg
         .extensions_mut()
         .as_mut()
-        .ok_or(EdnsError::OPTRecordNotFound)?;
+        .ok_or(EdnsError::EdnsDataNotFound)?;
     let opt = edns.options_mut();
     if let EdnsOption::Unknown(_, data) = opt
         .as_mut()
         .remove(&EdnsCode::Unknown(ARK_EDNS_OPCODE))
-        .ok_or(EdnsError::OPTRecordNotFound)?
+        .ok_or(EdnsError::EdnsDataNotFound)?
     {
         Ok(data)
     } else {
-        Err(EdnsError::OPTRecordNotFound)
+        Err(EdnsError::EdnsDataNotFound)
     }
 }
