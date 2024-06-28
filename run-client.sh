@@ -7,7 +7,7 @@ sudo setcap cap_net_admin=eip ./target/release/ark
 pid=$!
 
 
-trap "kill $pid" INT TERM
+trap 'kill $pid' INT TERM
 
 sleep 1
 sudo ip route add 34.223.124.45 dev ark-0
