@@ -44,14 +44,10 @@ pub fn to_edns_packet(data: &[u8]) -> EdnsResult<Vec<u8>> {
     let mut encoder = BinEncoder::new(&mut buf);
     msg.emit(&mut encoder).unwrap();
 
-    dbg!(buf.len());
-    // dbg!(&buf);
     Ok(buf)
 }
 
 pub fn from_edns_packet(buf: &[u8]) -> EdnsResult<Vec<u8>> {
-    dbg!(buf.len());
-    // dbg!(&buf);
     let mut deserialized_msg = {
         let mut decoder = BinDecoder::new(buf);
         Message::read(&mut decoder).unwrap()
