@@ -118,10 +118,9 @@ impl Relay {
     pub fn start_upd_pipe(&self) {
         let mut buf = [0; 1500];
         while let Ok(nbytes) = self.proxy_conn.recv(&mut buf) {
-            // let buf = edns::from_edns_packet(&buf[..nbytes]).unwrap();
+            let buf = edns::from_edns_packet(&buf[..nbytes]).unwrap();
             let mut packet = [0; 1500];
-            (&mut packet[0..nbytes]).copy_from_slice(&buf[0..nbytes]);
-            // (&mut packet[..buf.len()]).copy_from_slice(&buf);
+            (&mut packet[..buf.len()]).copy_from_slice(&buf);
             let packet = TcpPacketSlice(packet);
             info!("received packet: {packet:?}");
             self.udp_pipe.tx.send(packet).unwrap();
@@ -133,7 +132,9 @@ impl Relay {
             select! {
                 recv(self.tcp_input_pipe.rx) -> packet => {
                     let packet = packet.unwrap();
-                    self.proxy_conn.send_to(&(packet.0), self.peer_addr).unwrap();
+
+                    let buf = edns::to_edns_packet(packet.as_bytes()).unwrap();
+                    self.proxy_conn.send_to(&buf, self.peer_addr).unwrap();
                 },
                 recv(self.udp_pipe.rx) -> packet => {
                     let packet = packet.unwrap();
