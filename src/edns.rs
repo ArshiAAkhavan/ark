@@ -9,11 +9,11 @@ use hickory_proto as dns;
 
 const ARK_EDNS_OPCODE: u16 = 65001;
 
-#[derive(Debug,thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum EdnsError {
     #[error("failed to create DNS packet")]
     DnsPacketError(#[from] ProtoError),
-    
+
     #[error("failed to extract raw data from EDNS field")]
     EdnsDataNotFound,
 }
@@ -39,7 +39,7 @@ pub fn to_edns_packet(data: &[u8]) -> EdnsResult<Vec<u8>> {
 
     let mut buf = Vec::new();
     let mut encoder = BinEncoder::new(&mut buf);
-    msg.emit(&mut encoder).unwrap();
+    msg.emit(&mut encoder)?;
 
     Ok(buf)
 }
@@ -47,7 +47,7 @@ pub fn to_edns_packet(data: &[u8]) -> EdnsResult<Vec<u8>> {
 pub fn from_edns_packet(buf: &[u8]) -> EdnsResult<Vec<u8>> {
     let mut deserialized_msg = {
         let mut decoder = BinDecoder::new(buf);
-        Message::read(&mut decoder).unwrap()
+        Message::read(&mut decoder)?
     };
 
     let edns = deserialized_msg

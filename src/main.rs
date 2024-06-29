@@ -71,22 +71,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn write_to_nic(iface: &tun_tap::Iface, proxy: &Relay) {
     while let Ok(packet) = proxy.read() {
         info!("writing to nic: {packet:?}");
-        let iph = etherparse::Ipv4Header::new(
+        let iph = match etherparse::Ipv4Header::new(
             packet.packet_len(),
             128,
             IpNumber::TCP,
             packet.source_ip().octets(),
             packet.destination_ip().octets(),
-        )
-        .unwrap();
+        ) {
+            Ok(iph) => iph,
+            Err(e) => {
+                warn!("failed to create Ipv4 Header to write in NIC");
+                debug!("{e}");
+                continue;
+            }
+        };
         let mut buf = [0u8; 1500];
         let mut ptr = &mut buf[..];
-        iph.write(&mut ptr).unwrap();
+        if let Err(e) = iph.write(&mut ptr) {
+            warn!("failed to create Ipv4 Header to write in NIC");
+            debug!("{e}");
+            continue;
+        };
         let ptr = &mut ptr[..packet.packet_len() as usize];
         ptr.copy_from_slice(packet.tcp_raw());
 
         let buf = &buf[..iph.header_len() + packet.packet_len() as usize];
-        iface.send(buf).unwrap();
+        if let Err(e) = iface.send(buf) {
+            warn!("failed to write Ipv4 Header to NIC");
+            debug!("{e}");
+            continue;
+        }
     }
 }
 
@@ -106,26 +120,40 @@ fn read_from_nic(iface: &tun_tap::Iface, proxy: &Relay) {
                             let mut tcp_buff = [0u8; 1500];
                             let _ = &tcp_buff[..tcp_packet_size]
                                 .copy_from_slice(&buff[ip_header_end_index..nbytes]);
-                            set_mss_if_any(&mut tcph);
-                            let x = tcph
-                                .calc_checksum_ipv4_raw(
-                                    src_ip.octets(),
-                                    dst_ip.octets(),
-                                    &tcp_buff[tcph.header_len()..tcp_packet_size],
-                                )
-                                .unwrap();
-                            tcph.checksum = x;
-                            // assert_eq!(prev, tcph.header_len());
+                            tcph = match set_mss_if_any(tcph) {
+                                Some(tcph) => tcph,
+                                None => {
+                                    warn!("failed to set new MSS, ignoring packet...");
+                                    continue;
+                                }
+                            };
+                            let checksum = match tcph.calc_checksum_ipv4_raw(
+                                src_ip.octets(),
+                                dst_ip.octets(),
+                                &tcp_buff[tcph.header_len()..tcp_packet_size],
+                            ) {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    warn!("failed to calculate TCP checksum, ignoring packet...");
+                                    debug!("{e}");
+                                    continue;
+                                }
+                            };
+                            tcph.checksum = checksum;
                             let mut buf = &mut tcp_buff[..];
-                            tcph.write(&mut buf).unwrap();
-                            let packet = TcpPacketSlice::new(
-                                src_ip,
-                                dst_ip,
-                                &tcp_buff[..tcp_packet_size],
-                                // &buff[ip_header_end_index..nbytes],
-                            );
+                            if let Err(e) = tcph.write(&mut buf) {
+                                warn!("failed to send TCP packet via proxy, ignoring packet...");
+                                debug!("{e}");
+                                continue;
+                            }
+                            let packet =
+                                TcpPacketSlice::new(src_ip, dst_ip, &tcp_buff[..tcp_packet_size]);
                             info!("iface: {packet:?}");
-                            proxy.write(packet).unwrap();
+                            if let Err(e) = proxy.write(packet) {
+                                warn!("failed to send TCP packet via proxy, ignoring packet...");
+                                debug!("{e}");
+                                continue;
+                            }
                         }
                         Err(_) => warn!("sick tcp packet"),
                     }
@@ -136,21 +164,20 @@ fn read_from_nic(iface: &tun_tap::Iface, proxy: &Relay) {
     }
 }
 
-fn set_mss_if_any(tcph: &mut etherparse::TcpHeader) {
+fn set_mss_if_any(mut tcph: etherparse::TcpHeader) -> Option<etherparse::TcpHeader> {
     let mss = tcph.options_iterator().find_map(|opt| match opt.ok()? {
         TcpOptionElement::MaximumSegmentSize(mss) => Some(mss),
         _ => None,
     });
     if mss.is_none() {
-        return;
+        return None;
     }
     let mut new_options = Vec::new();
 
     for option in tcph.options_iterator() {
-        let option = option.unwrap();
+        let option = option.ok()?;
         match option {
             TcpOptionElement::MaximumSegmentSize(mss) => {
-                info!("old mss: {mss}");
                 let new_mss = std::cmp::min(mss, 1300);
                 new_options.push(TcpOptionElement::MaximumSegmentSize(new_mss));
             }
@@ -158,20 +185,8 @@ fn set_mss_if_any(tcph: &mut etherparse::TcpHeader) {
         }
     }
 
-    tcph.set_options(&new_options)
-        .map_err(|_| "Failed to set options")
-        .unwrap();
-
-    for option in tcph.options_iterator() {
-        let option = option.unwrap();
-        match option {
-            TcpOptionElement::MaximumSegmentSize(mss) => {
-                info!("new mss: {mss}");
-            }
-            _ => {}
-        }
-    }
-    info!("set MSS")
+    tcph.set_options(&new_options).ok()?;
+    Some(tcph)
 }
 
 fn setup_iface(subnet: &str) -> std::io::Result<tun_tap::Iface> {

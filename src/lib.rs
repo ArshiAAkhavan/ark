@@ -3,7 +3,7 @@ mod relay;
 
 use std::{fmt::Debug, net::Ipv4Addr};
 
-pub use relay::{RelayError, Mode as RelayMode, Relay as Relay};
+pub use relay::{Mode as RelayMode, Relay, RelayError};
 
 pub struct TcpPacketSlice([u8; 1500]);
 
@@ -51,7 +51,8 @@ impl TcpPacketSlice {
 
 impl Debug for TcpPacketSlice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let x = etherparse::TcpHeaderSlice::from_slice(&self.0[10..]).unwrap();
+        let tcph =
+            etherparse::TcpHeaderSlice::from_slice(&self.0[10..]).map_err(|_| std::fmt::Error)?;
         write!(
             f,
             "{}:{} -> {}:{}: len = {}",
@@ -59,7 +60,7 @@ impl Debug for TcpPacketSlice {
             self.source_port(),
             self.destination_ip(),
             self.destination_port(),
-            self.packet_len() - x.slice().len() as u16
+            self.packet_len() - tcph.slice().len() as u16
         )
     }
 }
