@@ -121,9 +121,10 @@ fn read_from_nic(iface: &tun_tap::Iface, proxy: &Relay) {
                             let _ = &tcp_buff[..tcp_packet_size]
                                 .copy_from_slice(&buff[ip_header_end_index..nbytes]);
                             tcph = match set_mss_if_any(tcph) {
-                                Some(tcph) => tcph,
-                                None => {
+                                Ok(tcph) => tcph,
+                                Err(e) => {
                                     warn!("failed to set new MSS, ignoring packet...");
+                                    debug!("{e}");
                                     continue;
                                 }
                             };
@@ -164,18 +165,18 @@ fn read_from_nic(iface: &tun_tap::Iface, proxy: &Relay) {
     }
 }
 
-fn set_mss_if_any(mut tcph: etherparse::TcpHeader) -> Option<etherparse::TcpHeader> {
+fn set_mss_if_any(mut tcph: etherparse::TcpHeader) -> Result<etherparse::TcpHeader,Box<dyn std::error::Error>> {
     let mss = tcph.options_iterator().find_map(|opt| match opt.ok()? {
         TcpOptionElement::MaximumSegmentSize(mss) => Some(mss),
         _ => None,
     });
     if mss.is_none() {
-        return None;
+        return Ok(tcph);
     }
     let mut new_options = Vec::new();
 
     for option in tcph.options_iterator() {
-        let option = option.ok()?;
+        let option = option?;
         match option {
             TcpOptionElement::MaximumSegmentSize(mss) => {
                 let new_mss = std::cmp::min(mss, 1300);
@@ -185,8 +186,8 @@ fn set_mss_if_any(mut tcph: etherparse::TcpHeader) -> Option<etherparse::TcpHead
         }
     }
 
-    tcph.set_options(&new_options).ok()?;
-    Some(tcph)
+    tcph.set_options(&new_options)?;
+    Ok(tcph)
 }
 
 fn setup_iface(subnet: &str) -> std::io::Result<tun_tap::Iface> {
