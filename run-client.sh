@@ -12,7 +12,7 @@ remote_value=""
 # Iterate through the arguments to find the --remote flag
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --remote)
+    --remote|-r)
       remote_value="$2"
       shift # past argument
       shift # past value
