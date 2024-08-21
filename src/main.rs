@@ -1,6 +1,6 @@
 use std::{process::Command, thread};
 
-use ark::{Relay, RelayMode, TcpPacketSlice};
+use ark::{Relay, RelayMode, TcpPacketSlice, Tunnel};
 use etherparse::{IpNumber, TcpOptionElement};
 use log::{debug, info, warn};
 
@@ -52,11 +52,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let iface = setup_iface(&opts.subnet)?;
-    let proxy = Relay::new(
-        opts.local,
-        opts.remote.unwrap_or_default(),
-        opts.mode.into(),
-    )?;
+    let proxy = match opts.mode {
+        Mode::Client => Relay::connect(opts.remote.unwrap(), opts.local),
+        Mode::Server => Relay::bind(opts.local),
+    }?;
 
     thread::scope(|s| {
         s.spawn(|| proxy.start_upd_pipe());
@@ -165,7 +164,9 @@ fn read_from_nic(iface: &tun_tap::Iface, proxy: &Relay) {
     }
 }
 
-fn set_mss_if_any(mut tcph: etherparse::TcpHeader) -> Result<etherparse::TcpHeader,Box<dyn std::error::Error>> {
+fn set_mss_if_any(
+    mut tcph: etherparse::TcpHeader,
+) -> Result<etherparse::TcpHeader, Box<dyn std::error::Error>> {
     let mss = tcph.options_iterator().find_map(|opt| match opt.ok()? {
         TcpOptionElement::MaximumSegmentSize(mss) => Some(mss),
         _ => None,
