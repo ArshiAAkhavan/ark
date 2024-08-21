@@ -1,6 +1,6 @@
 use std::{process::Command, thread};
 
-use ark::{Relay, RelayMode, TcpPacketSlice};
+use ark::{Relay, TcpPacketSlice};
 use etherparse::{IpNumber, TcpOptionElement};
 use log::{debug, info, warn};
 
@@ -11,15 +11,6 @@ pub enum Mode {
     #[default]
     Client,
     Server,
-}
-
-impl From<Mode> for RelayMode {
-    fn from(value: Mode) -> Self {
-        match value {
-            Mode::Client => RelayMode::Client,
-            Mode::Server => RelayMode::Server,
-        }
-    }
 }
 
 #[derive(Parser)]

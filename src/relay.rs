@@ -13,12 +13,6 @@ use log::{debug, info, warn};
 
 use crate::{edns, TcpPacketSlice};
 
-#[derive(Clone)]
-pub enum Mode {
-    Client,
-    Server,
-}
-
 struct TcpPipe {
     tx: Sender<TcpPacketSlice>,
     rx: Receiver<TcpPacketSlice>,
