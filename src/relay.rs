@@ -41,6 +41,9 @@ pub enum RelayError {
 
     #[error("pipe is closed and unable to transfer data")]
     PipeClosed,
+
+    #[error("IpV6 not supported")]
+    IpV6NotSupported,
 }
 
 unsafe impl Sync for Relay {}
@@ -53,7 +56,7 @@ pub struct Relay {
 }
 
 impl Relay {
-    pub fn connect<A: ToSocketAddrs>(remote: A, local: A) -> Result<Relay, RelayError> {
+    pub fn connect<A: ToSocketAddrs>(remote: A, local: A) -> Result<(Relay, Ipv4Addr), RelayError> {
         let proxy_conn = UdpSocket::bind(local)?;
         info!("started udp client socket");
         UdpSocket::connect(&proxy_conn, &remote)?;
@@ -63,37 +66,52 @@ impl Relay {
 
         let mut buf = [0u8; 1500];
         let nbytes = proxy_conn.recv(&mut buf)?;
-        if &buf[..nbytes] != "server accept".as_bytes() {
+        let auth_prefix = "server accept";
+        if &buf[..auth_prefix.len()] != auth_prefix.as_bytes() {
             return Err(RelayError::TunnelAuthFailed);
         }
+        let ipv4_raw = &buf[auth_prefix.len()..nbytes];
+        let ip = Ipv4Addr::new(ipv4_raw[0], ipv4_raw[1], ipv4_raw[2], ipv4_raw[3]);
+
         info!("connected to proxy server");
-        Ok(Self {
-            tunnel_conn: proxy_conn,
-            tunnel: Box::new(Client::connect(peer)),
-            tcp_input_pipe: Default::default(),
-            tcp_output_pipe: Default::default(),
-            udp_pipe: Default::default(),
-        })
+        info!("allocated ip is: {ip}");
+        Ok((
+            Self {
+                tunnel_conn: proxy_conn,
+                tunnel: Box::new(Client::connect(peer)),
+                tcp_input_pipe: Default::default(),
+                tcp_output_pipe: Default::default(),
+                udp_pipe: Default::default(),
+            },
+            ip,
+        ))
     }
 }
 
 impl Relay {
-    pub fn bind<A: ToSocketAddrs>(local: A) -> Result<Relay, RelayError> {
+    pub fn bind<A: ToSocketAddrs>(local: A, gateway: Ipv4Addr) -> Result<Relay, RelayError> {
         let tunnel_conn = UdpSocket::bind(local)?;
+
+        let mut server = Server::bind(gateway)?;
 
         info!("started udp server socket");
         let mut buf = [0u8; 1500];
-        let peer_addr = loop {
+        loop {
             let (nbytes, addr) = tunnel_conn.recv_from(&mut buf)?;
             if &buf[..nbytes] == "client hello".as_bytes() {
-                tunnel_conn.send_to("server accept".as_bytes(), addr)?;
-                break addr;
+                debug!("client with addr: [{addr}] sent connection request");
+                let peer_ip = server.allocate_new_ip(addr);
+                tunnel_conn.send_to(
+                    &["server accept".as_bytes(), &peer_ip.octets()[..]].concat(),
+                    addr,
+                )?;
+                break;
             }
-        };
+        }
         info!("connected to proxy client");
         Ok(Self {
             tunnel_conn,
-            tunnel: Box::new(Server::bind(Ipv4Addr::new(172, 16, 0, 2), peer_addr)),
+            tunnel: Box::new(server),
             tcp_input_pipe: Default::default(),
             tcp_output_pipe: Default::default(),
             udp_pipe: Default::default(),
@@ -174,20 +192,32 @@ pub trait Tunnel {
 }
 
 pub struct Server {
-    addr: HashMap<Ipv4Addr, SocketAddr>,
+    addr_map: HashMap<Ipv4Addr, SocketAddr>,
+    base: Ipv4Addr,
 }
 
 impl Server {
-    fn bind(client_id: Ipv4Addr, client_addr: SocketAddr) -> Self {
-        let mut addr = HashMap::new();
-        addr.insert(client_id, client_addr);
-        Self { addr }
+    fn bind(gateway: Ipv4Addr) -> Result<Self, RelayError> {
+        let addr = HashMap::new();
+        Ok(Self {
+            addr_map: addr,
+            base: gateway,
+        })
+    }
+
+    fn allocate_new_ip(&mut self, addr: SocketAddr) -> Ipv4Addr {
+        let mut base = self.base.octets();
+        base[3] += 1;
+        dbg!(base);
+        self.base = Ipv4Addr::new(base[0], base[1], base[2], base[3]);
+        self.addr_map.insert(self.base, addr);
+        self.base
     }
 }
 
 impl Tunnel for Server {
     fn dest(&self, packet: &TcpPacketSlice) -> Option<SocketAddr> {
-        self.addr.get(&packet.destination_ip()).copied()
+        self.addr_map.get(&packet.destination_ip()).copied()
     }
 
     fn handle_packet(&self, buf: &[u8]) -> Option<TcpPacketSlice> {

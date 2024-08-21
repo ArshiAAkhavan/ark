@@ -1,4 +1,4 @@
-use std::{process::Command, thread};
+use std::{net::Ipv4Addr, process::Command, thread};
 
 use ark::{Relay, TcpPacketSlice};
 use etherparse::{IpNumber, TcpOptionElement};
@@ -30,9 +30,9 @@ struct Opts {
     #[arg(short, long)]
     mode: Mode,
 
-    /// subnet range to listen on
+    /// subnet range to listen on (server mode)
     #[arg(short, long)]
-    subnet: String,
+    subnet: Option<String>,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -40,13 +40,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if opts.mode == Mode::Client && opts.remote.is_none() {
         panic!("provide remote when running in client mode");
     }
+    if opts.mode == Mode::Client && opts.subnet.is_some() {
+        panic!("subnet does not work in client mode")
+    }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    let iface = setup_iface(&opts.subnet)?;
-    let proxy = match opts.mode {
-        Mode::Client => Relay::connect(opts.remote.unwrap(), opts.local),
-        Mode::Server => Relay::bind(opts.local),
-    }?;
+    let (proxy, subnet) = match opts.mode {
+        Mode::Client => {
+            let (relay, ip) = Relay::connect(opts.remote.unwrap(), opts.local)?;
+            (relay, format!("{ip}/24"))
+        }
+        Mode::Server => {
+            let ipv4_string = opts
+                .subnet
+                .clone()
+                .unwrap()
+                .split('/')
+                .next()
+                .unwrap()
+                .to_owned();
+            let ip: Ipv4Addr = ipv4_string.parse()?;
+            (Relay::bind(opts.local, ip)?, opts.subnet.unwrap())
+        }
+    };
+    let iface = setup_iface(&subnet)?;
 
     thread::scope(|s| {
         s.spawn(|| proxy.start_upd_pipe());
