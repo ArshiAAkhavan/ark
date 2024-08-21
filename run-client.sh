@@ -1,4 +1,4 @@
-#!/bin/bash 
+#!/bin/bash
 
 cargo build --release
 sudo setcap cap_net_admin=eip ./target/release/ark
