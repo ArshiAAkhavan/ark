@@ -1,6 +1,6 @@
 use std::{process::Command, thread};
 
-use ark::{Relay, RelayMode, TcpPacketSlice, Tunnel};
+use ark::{Relay, RelayMode, TcpPacketSlice};
 use etherparse::{IpNumber, TcpOptionElement};
 use log::{debug, info, warn};
 

@@ -9,7 +9,6 @@ use crossbeam::{
     select,
 };
 
-use etherparse::err::packet;
 use log::{debug, info, warn};
 
 use crate::{edns, TcpPacketSlice};
