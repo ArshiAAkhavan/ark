@@ -3,8 +3,9 @@ mod relay;
 
 use std::{fmt::Debug, net::Ipv4Addr};
 
-pub use relay::{Relay, RelayError, Tunnel};
+pub use relay::{Client, Relay, RelayError, Server, Tunnel};
 
+#[derive(Clone, Copy)]
 pub struct TcpPacketSlice([u8; 1500]);
 
 impl TcpPacketSlice {

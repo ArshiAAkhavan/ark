@@ -1,6 +1,6 @@
 use std::{net::Ipv4Addr, process::Command, thread};
 
-use ark::{Relay, TcpPacketSlice};
+use ark::{Client, Relay, Server, TcpPacketSlice, Tunnel};
 use etherparse::{IpNumber, TcpOptionElement};
 use log::{debug, info, warn};
 
@@ -45,10 +45,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    let (proxy, subnet) = match opts.mode {
+    let (proxy, subnet): (Box<dyn Tunnel>, String) = match opts.mode {
         Mode::Client => {
-            let (relay, ip) = Relay::connect(opts.remote.unwrap(), opts.local)?;
-            (relay, format!("{ip}/24"))
+            let (relay, ip) = Client::connect(opts.remote.unwrap(), opts.local)?;
+            (Box::new(relay), format!("{ip}/24"))
         }
         Mode::Server => {
             let ipv4_string = opts
@@ -60,22 +60,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap()
                 .to_owned();
             let ip: Ipv4Addr = ipv4_string.parse()?;
-            (Relay::bind(opts.local, ip)?, opts.subnet.unwrap())
+            (
+                Box::new(Server::bind(opts.local, ip)?),
+                opts.subnet.unwrap(),
+            )
         }
     };
     let iface = setup_iface(&subnet)?;
 
     thread::scope(|s| {
-        s.spawn(|| proxy.start_upd_pipe());
+        let relay1 = proxy.relay();
+        let relay2 = proxy.relay();
+        s.spawn(|| proxy.run_udp_pipe());
+        s.spawn(|| proxy.run_udp_tunnel());
         s.spawn(|| proxy.run());
-        s.spawn(|| read_from_nic(&iface, &proxy));
-        s.spawn(|| write_to_nic(&iface, &proxy));
+        s.spawn(|| read_from_nic(&iface, relay1));
+        s.spawn(|| write_to_nic(&iface, relay2));
     });
 
     Ok(())
 }
 
-fn write_to_nic(iface: &tun_tap::Iface, proxy: &Relay) {
+fn write_to_nic(iface: &tun_tap::Iface, proxy: Relay) {
     while let Ok(packet) = proxy.read() {
         info!("writing to nic: {packet:?}");
         let iph = match etherparse::Ipv4Header::new(
@@ -111,7 +117,7 @@ fn write_to_nic(iface: &tun_tap::Iface, proxy: &Relay) {
     }
 }
 
-fn read_from_nic(iface: &tun_tap::Iface, proxy: &Relay) {
+fn read_from_nic(iface: &tun_tap::Iface, proxy: Relay) {
     let mut buff = [0u8; 1500];
     while let Ok(nbytes) = iface.recv(&mut buff) {
         if let Ok(iph) = etherparse::Ipv4HeaderSlice::from_slice(&buff[..nbytes]) {
